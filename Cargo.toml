@@ -1,0 +1,9 @@
+[package]
+name = "gramaire"
+description = "another implementation of the grimoire_css syntax"
+version = "0.1.0"
+edition = "2021"
+authors = [ "Elizabeth Hollyburn <cargo@hollyburn.io>" ]
+license = "MIT"
+
+[dependencies]
