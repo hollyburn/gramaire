@@ -3,7 +3,8 @@ use std::str::FromStr;
 #[derive(Debug, PartialEq)]
 pub struct Spell {
     area: Option<SpellArea>,
-    focus_effect: Option<FocusEffect>,
+    focus: Option<String>,
+    effect: Option<Vec<String>>,
     component: String,
     target: SpellTarget,
 }
@@ -54,12 +55,6 @@ impl FromStr for SpellBreakpoint {
 }
 
 #[derive(Debug, PartialEq)]
-enum FocusEffect {
-    Focus(String),
-    Effect(Vec<String>),
-}
-
-#[derive(Debug, PartialEq)]
 enum SpellTarget {
     CSSValue(String),
     Variables(Vec<String>),
@@ -90,41 +85,50 @@ impl FromStr for Spell {
             None => None,
         };
 
-        let fe_start = match area_end {
+        let focus_start = match area_end {
             Some(i) => i + 2,
             None => 0,
         };
-        let focus_len = match spell[fe_start..].chars().next() {
-            Some('{') => match spell[fe_start..].find('}') {
+        let focus_len = match spell[focus_start..].chars().next() {
+            Some('{') => match spell[focus_start..].find('}') {
                 Some(i) => Some(i),
                 None => return Err("spell ends without closing focus"),
             },
             None => return Err("spell ends too early while looking for focus"),
             _ => None,
         };
-        // NOTE: a Spell cannot have both a `focus` and an `effect` for some reason
-        let focus_effect = match focus_len {
-            Some(i) => Some(FocusEffect::Focus(String::from(&spell[fe_start+1..fe_start+i]))),
-            None => match spell[fe_start..].find([':', '=']) {
-                Some(i) => match spell.chars().nth(fe_start + i) {
-                    Some(c) => match c {
-                        '=' => None, // effect ends before component
-                        ':' => Some(FocusEffect::Effect(
-                                spell[fe_start..fe_start+i].split(',').map(String::from).collect())
-                        ),
-                        c => unreachable!("impossible to match character {}", c),
-                    },
-                    None => unreachable!("spell is shorter than itself"),
-                }
-                None => None,
-            },
+
+        let focus = match focus_len {
+            Some(i) => Some(String::from(&spell[focus_start+1..focus_start+i])),
+            None => None,
         };
 
-        let component_start = match focus_effect {
-            Some(FocusEffect::Focus(_)) => fe_start + focus_len.unwrap_or(0) + 1,
-            Some(FocusEffect::Effect(_)) => fe_start + spell[fe_start..].find(':').unwrap() + 1,
-            None => fe_start,
+        let focus_len = focus_len.unwrap_or(0);
+
+        let effect_start = focus_start + focus_len + if focus_len != 0 { 1 } else { 0 };
+
+        let effect = match spell[effect_start..].find([':', '=']) {
+            Some(i) => match spell.chars().nth(effect_start + i) {
+                Some(c) => match c {
+                    '=' => None, // effect ends before component
+                    ':' => Some(
+                        spell[effect_start..effect_start+i].split(',').map(String::from).collect()
+                    ),
+                    c => unreachable!("impossible to match character {}", c),
+                },
+                None => unreachable!("spell is shorter than itself"),
+            }
+            None => None,
         };
+
+        let component_start = match effect {
+                Some(_) => effect_start + spell[effect_start..].find(':').unwrap() + 1,
+                None => match focus {
+                    Some(_) => focus_start + focus_len + 1,
+                    None => focus_start,
+                },
+        };
+
         let component_len = match spell[component_start..].find('=') {
             Some(i) => i,
             None => return Err("expected '=' after component but could not find one"),
@@ -135,7 +139,8 @@ impl FromStr for Spell {
 
         Ok(Self{
             area,
-            focus_effect,
+            focus,
+            effect,
             component,
             target,
         })
@@ -144,7 +149,7 @@ impl FromStr for Spell {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Spell, SpellArea, FocusEffect, SpellBreakpoint, SpellTarget};
+    use crate::{Spell, SpellArea, SpellBreakpoint, SpellTarget};
 
     fn expect(spell_str: &str, spell: Spell) {
         assert_eq!(spell_str.parse(), Ok(spell));
@@ -154,7 +159,8 @@ mod tests {
     fn simple_spell() {
         expect("border-radius=8px", Spell{
             area: None,
-            focus_effect: None,
+            focus: None,
+            effect: None,
             component: String::from("border-radius"),
             target: SpellTarget::CSSValue(String::from("8px")),
         });
@@ -164,7 +170,8 @@ mod tests {
     fn spell_with_area() {
         expect("(width>=768px)__br=0.375rem", Spell {
             area: Some(SpellArea::MediaQuery(String::from("width>=768px"))),
-            focus_effect: None,
+            focus: None,
+            effect: None,
             component: String::from("br"),
             target: SpellTarget::CSSValue(String::from("0.375rem")),
         });
@@ -174,7 +181,8 @@ mod tests {
     fn spell_with_focus() {
         expect("{[hidden]_>_p:hover:active}color=red", Spell{
             area: None,
-            focus_effect: Some(FocusEffect::Focus(String::from("[hidden]_>_p:hover:active"))),
+            focus: Some(String::from("[hidden]_>_p:hover:active")),
+            effect: None,
             component: String::from("color"),
             target: SpellTarget::CSSValue(String::from("red")),
         });
@@ -184,7 +192,8 @@ mod tests {
     fn spell_with_effect() {
         expect("hover,active:background-color=darkgrey", Spell{
             area: None,
-            focus_effect: Some(FocusEffect::Effect(vec![String::from("hover"), String::from("active")])),
+            focus: None,
+            effect: Some(vec![String::from("hover"), String::from("active")]),
             component: String::from("background-color"),
             target: SpellTarget::CSSValue(String::from("darkgrey")),
         });
@@ -194,7 +203,8 @@ mod tests {
     fn spell_with_variables() {
         expect("btn=8px_lightgrey_grey_darkgrey", Spell {
             area: None,
-            focus_effect: None,
+            focus: None,
+            effect: None,
             component: String::from("btn"),
             target: SpellTarget::Variables(vec![
                 String::from("8px"),
@@ -209,7 +219,8 @@ mod tests {
     fn complex_spell_area_focus() {
         expect("md__{[hidden]_>_p:hover:active}color=red", Spell{
             area: Some(SpellArea::Breakpoint(SpellBreakpoint::Medium)),
-            focus_effect: Some(FocusEffect::Focus(String::from("[hidden]_>_p:hover:active"))),
+            focus: Some(String::from("[hidden]_>_p:hover:active")),
+            effect: None,
             component: String::from("color"),
             target: SpellTarget::CSSValue(String::from("red")),
         });
@@ -219,9 +230,21 @@ mod tests {
     fn complex_spell_area_effect() {
         expect("md__hover,active:color=red", Spell{
             area: Some(SpellArea::Breakpoint(SpellBreakpoint::Medium)),
-            focus_effect: Some(FocusEffect::Effect(vec![String::from("hover"), String::from("active")])),
+            focus: None,
+            effect: Some(vec![String::from("hover"), String::from("active")]),
             component: String::from("color"),
             target: SpellTarget::CSSValue(String::from("red")),
+        });
+    }
+
+    #[test]
+    fn complex_spell_area_focus_effect() {
+        expect("md__{_>_p}hover:display=none", Spell{
+            area: Some(SpellArea::Breakpoint(SpellBreakpoint::Medium)),
+            focus: Some(String::from("_>_p")),
+            effect: Some(vec![String::from("hover")]),
+            component: String::from("display"),
+            target: SpellTarget::CSSValue(String::from("none")),
         });
     }
 }
