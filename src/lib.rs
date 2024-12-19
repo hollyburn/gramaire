@@ -118,7 +118,7 @@ impl FromStr for Spell {
                 },
                 None => unreachable!("spell is shorter than itself"),
             }
-            None => None,
+            None => return Err("no effect or component end. expected 'component=target'"),
         };
 
         let component_start = match effect {
@@ -153,6 +153,22 @@ mod tests {
 
     fn expect(spell_str: &str, spell: Spell) {
         assert_eq!(spell_str.parse(), Ok(spell));
+    }
+
+    #[test]
+    fn breakpoints() {
+        let test_pairs = [
+            ("sm", SpellBreakpoint::Small),
+            ("md", SpellBreakpoint::Medium),
+            ("lg", SpellBreakpoint::Large),
+            ("xl", SpellBreakpoint::XLarge),
+            ("xxl", SpellBreakpoint::XXLarge),
+        ];
+        for (s, bp) in test_pairs {
+            assert_eq!(s.parse::<SpellBreakpoint>().unwrap(), bp);
+        }
+
+        assert_eq!("100xl".parse::<SpellBreakpoint>(), Err("invalid breakpoint for area"));
     }
 
     #[test]
@@ -246,5 +262,26 @@ mod tests {
             component: String::from("display"),
             target: SpellTarget::CSSValue(String::from("none")),
         });
+    }
+
+    #[test]
+    fn spell_errors() {
+        let spell: Result<Spell, &str> = "__".parse();
+        assert_eq!(spell, Err("spell not long enough"));
+
+        let spell: Result<Spell, &str> = "(__".parse();
+        assert_eq!(spell, Err("missing ')' in spell area"));
+
+        let spell: Result<Spell, &str> = "{".parse();
+        assert_eq!(spell, Err("spell ends without closing focus"));
+
+        let spell: Result<Spell, &str> = "md__".parse();
+        assert_eq!(spell, Err("spell ends too early while looking for focus"));
+
+        let spell: Result<Spell, &str> = "md__{p_>_span}active".parse();
+        assert_eq!(spell, Err("no effect or component end. expected 'component=target'"));
+
+        let spell: Result<Spell, &str> = "md__{p_>_span}active:border-radius".parse();
+        assert_eq!(spell, Err("expected '=' after component but could not find one"));
     }
 }
